@@ -22,7 +22,7 @@ def get_PBP_conc(year):
     max_games = 1312  # NHL regular season total
     all_rows = []  # Collect all rows here
     session = requests.Session()  # Reuse connections
-
+    
     def fetch_game(count):
         game_rows = []
         game_id = f"{year}02{count:04}"
@@ -35,7 +35,8 @@ def get_PBP_conc(year):
         home_id = data['homeTeam']['id']
         away_id = data['awayTeam']['id']
         
-        for play in data.get('plays', []):
+        for idx, play in enumerate(data.get('plays', [])):
+           
             period = play['periodDescriptor']['number']
             time = play['timeInPeriod']
             event = play['typeDescKey']
@@ -58,12 +59,13 @@ def get_PBP_conc(year):
                 print(f"Error in game {count}: {e}")
 
     df = pd.DataFrame(all_rows)
-    df.to_parquet(rf'C:\Users\Richard\OneDrive\Documentos\CS465_Project\data\{year}_{year+1}_PBP.parquet', compression='snappy')
+    
+    df.to_parquet(rf'C:\Users\3DLive\NHL_Analysis\data\{year}_{year+1}_PBP.parquet', compression='snappy')
 
 def show_df():
-    df = pd.read_parquet(r'C:\Users\Richard\OneDrive\Documentos\CS465_Project\data\2023_2024_PBP.parquet')
+    df = pd.read_parquet(r'C:\Users\3DLive\NHL_Analysis=\data\2023_2024_PBP.parquet')
     print(df.head(10))
 
 #get_PBP_conc(2023)
 if __name__ == "__main__":
-    get_PBP_conc(2023)
+    get_PBP_conc(2021)

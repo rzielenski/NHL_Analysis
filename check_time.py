@@ -8,7 +8,7 @@ logging.basicConfig()
 logging.getLogger('apscheduler').setLevel(logging.DEBUG)
 
 def test_job():
-    print(f"[{datetime.utcnow()}] ✅ TEST JOB RAN SUCCESSFULLY")
+    print(f"[{datetime.utcnow()}] TEST JOB RAN SUCCESSFULLY")
 
 scheduler = BackgroundScheduler()
 scheduler.start()

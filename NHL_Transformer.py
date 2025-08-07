@@ -2,13 +2,18 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import pandas as pd
-# hyperparameters
+import json
+
+# THIS CODE IS FROM ANDREJ KARPATHY's VIDEO ON TRANSFOMERS
+# https://www.youtube.com/watch?v=8rXD5-xhemo
+
 batch_size = 64 # how many independent sequences will we process in parallel?
 block_size = 256 # what is the maximum context length for predictions?
-max_iters = 1500
-eval_interval = 500
+max_iters = 500
+eval_interval = 100
 learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(device)
 eval_iters = 200
 n_embd = 384
 n_head = 6
@@ -16,31 +21,49 @@ n_layer = 6
 dropout = 0.2
 # ------------
 
-torch.manual_seed(1337)
 
-unique_tokens = set()
-alldata = []
-df = pd.read_parquet(r'C:\Users\Richard\OneDrive\Documentos\CS465_Project\data\2023_2024_PBP.parquet')
-for _, row in df.iterrows():
-    token = f"{row['event']}_{row['team']}"
-    alldata.append(token)
-    unique_tokens.add(token)
+# unique_tokens = set()
+# alldata = []
+# df = pd.read_parquet("C:/Users/3DLive/NHL_Analysis/data/")
 
-unique_tokens.update(['PAD', 'UNK', 'START', 'END'])
-toks = sorted(list(unique_tokens))
-vocab_size = len(toks)
+# # Track current game ID to detect when a new game starts
+# previous_game_id = None
 
-vocab_dict = {token: idx for idx, token in enumerate(unique_tokens)}
-inv_vocab = {idx: token for token, idx in vocab_dict.items()}
+# for _, row in df.iterrows():
+#     current_game_id = row['id']  # or whatever uniquely identifies a game
+#     # Insert START_<HOME>_<AWAY> at the beginning of each new game
+#     if current_game_id != previous_game_id:
+#         alldata.append("START")
+#         alldata.append(f"HOME_{row['home_abb']}")
+#         alldata.append(f"AWAY_{row['away_abb']}")
+#         unique_tokens.update(["START", f"HOME_{row['home_abb']}", f"AWAY_{row['away_abb']}"])
+#         previous_game_id = current_game_id
 
-encode = lambda t: [vocab_dict[event] for event in t]
-decode = lambda l: '\n'.join([inv_vocab[i] for i in l])
 
-# Train and test splits
-data = torch.tensor(encode(alldata), dtype=torch.long)
-n = int(0.9*len(data)) # first 90% will be train, rest val
-train_data = data[:n]
-val_data = data[n:]
+#     # Build regular token
+#     token = f"{row['event']}_{row['team']}"
+#     alldata.append(token)
+#     unique_tokens.add(token)
+
+
+# unique_tokens.update(['PAD', 'UNK', 'START', 'END'])
+# toks = sorted(list(unique_tokens))
+# vocab_size = len(toks)
+
+# vocab_dict = {token: idx for idx, token in enumerate(unique_tokens)}
+# inv_vocab = {idx: token for token, idx in vocab_dict.items()}
+
+# encode = lambda t: [vocab_dict[event] for event in t]
+# decode = lambda l: '\n'.join([inv_vocab[i] for i in l])
+
+# with open('data.json', 'w') as f:
+#     json.dump(vocab_dict, f, indent=4)
+
+# # Train and test splits
+# data = torch.tensor(encode(alldata), dtype=torch.long)
+# n = int(0.9*len(data))
+# train_data = data[:n]
+# val_data = data[n:]
 
 # data loading
 def get_batch(split):
@@ -84,7 +107,7 @@ class Head(nn.Module):
         B,T,C = x.shape
         k = self.key(x)   # (B,T,hs)
         q = self.query(x) # (B,T,hs)
-        # compute attention scores ("affinities")
+        # compute attention scores
         wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
         wei = F.softmax(wei, dim=-1) # (B, T, T)
@@ -185,46 +208,80 @@ class GPTLanguageModel(nn.Module):
 
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
+        end_token_idx = vocab_dict['END']
+
         for _ in range(max_new_tokens):
-            # crop idx to the last block_size tokens
             idx_cond = idx[:, -block_size:]
-            # get the predictions
-            logits, loss = self(idx_cond)
-            # focus only on the last time step
-            logits = logits[:, -1, :] # becomes (B, C)
-            # apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1) # (B, C)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            # append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :]  # (B, vocab_size)
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)  # (B, 1)
+
+            idx = torch.cat((idx, idx_next), dim=1)
+
+            # Stop if END token is generated
+            if (idx_next == end_token_idx).all():
+                break
+
         return idx
+
+
+with open('data.json', 'r') as f:
+    unique_tokens = json.load(f)
+vocab_dict = {token: idx for idx, token in enumerate(unique_tokens)}
+inv_vocab = {idx: token for token, idx in vocab_dict.items()}
+
+vocab_size = len(vocab_dict)
+encode = lambda t: [vocab_dict[event] for event in t]
+decode = lambda l: '\n'.join([inv_vocab[i] for i in l])
+
+
 
 model = GPTLanguageModel()
 m = model.to(device)
+
+
+
+state_dict = torch.load('simple_model.pth', map_location=device) 
+
+# Load the state_dict into the model
+model.load_state_dict(state_dict)
+model.to(device)
+# Set the model to evaluation mode if performing inference
+model.eval()
+
 # print the number of parameters in the model
-print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
+print(sum(p.numel() for p in model.parameters())/1e6, 'M parameters')
 
-# create a PyTorch optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+# # create a PyTorch optimizer
+# optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-for iter in range(max_iters):
+# for iter in range(max_iters):
 
-    # every once in a while evaluate the loss on train and val sets
-    if iter % eval_interval == 0 or iter == max_iters - 1:
-        losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+#     # every once in a while evaluate the loss on train and val sets
+#     if iter % eval_interval == 0 or iter == max_iters - 1:
+#         losses = estimate_loss()
+#         print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-    # sample a batch of data
-    xb, yb = get_batch('train')
+#     # sample a batch of data
+#     xb, yb = get_batch('train')
 
-    # evaluate the loss
-    logits, loss = model(xb, yb)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
+#     # evaluate the loss
+#     logits, loss = model(xb, yb)
+#     optimizer.zero_grad(set_to_none=True)
+#     loss.backward()
+#     optimizer.step()
 
+model_state_dict = model.state_dict()
+
+
+PATH = "simple_model.pth"
+torch.save(model_state_dict, PATH)
 # generate from the model
-context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
+context = encode(["START", "HOME_SJS", "AWAY_FLA",])
+context = torch.tensor([context], dtype=torch.long).to(device)
+
+output = model.generate(context, max_new_tokens=315)
+print(decode(output[0].tolist()))
+# print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
 #open('more.txt', 'w').write(decode(m.generate(context, max_new_tokens=10000)[0].tolist()))
